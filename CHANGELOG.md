@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Leave the TypeScript build cache out of the published package.
+- First release published through npm Trusted Publishing.
+
 ## 0.1.0
 
 - First release: a Harmony node covering every operation of the Harmony public API (tickets,
