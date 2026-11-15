@@ -11,8 +11,8 @@ export class HarmonyApi implements ICredentialType {
 	displayName = 'Harmony API';
 
 	icon = {
-		light: 'file:../nodes/Harmony/harmony.svg',
-		dark: 'file:../nodes/Harmony/harmony.dark.svg',
+		light: 'file:../nodes/Harmony/harmonyLogo.svg',
+		dark: 'file:../nodes/Harmony/harmonyLogo.dark.svg',
 	} as const;
 
 	documentationUrl = 'https://docs.harmony.io/settings/managing-api-access-keys';

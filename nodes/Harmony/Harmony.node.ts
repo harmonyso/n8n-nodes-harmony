@@ -21,7 +21,7 @@ export class Harmony implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Harmony',
 		name: 'harmony',
-		icon: { light: 'file:harmony.svg', dark: 'file:harmony.dark.svg' },
+		icon: { light: 'file:harmonyLogo.svg', dark: 'file:harmonyLogo.dark.svg' },
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
