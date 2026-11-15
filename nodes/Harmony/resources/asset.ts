@@ -1,0 +1,687 @@
+import type { INodeProperties } from 'n8n-workflow';
+import { getManyFields, simplifyField } from '../shared/descriptions';
+import {
+	ASSET_MDM_STATUSES,
+	ASSET_OWNERSHIPS,
+	ASSET_RETIREMENT_REASONS,
+	ASSET_STATUSES,
+	ASSET_TYPES,
+	enumOptions,
+} from '../shared/options';
+import { CSV_TO_LIST, JSON_VALUE, itemsFrom, paginate, simplify } from '../shared/transport';
+
+const resource = ['asset'];
+const ASSETS = '/asset-management/api/v1/assets';
+const assetUrl = (suffix = '') => `=${ASSETS}/{{ toPathSegment($parameter.assetId) }}${suffix}`;
+
+const SIMPLIFIED_FIELDS = [
+	'id',
+	'asset_id',
+	'name',
+	'asset_type',
+	'status',
+	'serial_number',
+	'manufacturer',
+	'model',
+	'employee_id',
+	'last_seen',
+];
+
+const showCreate = { resource, operation: ['create'] };
+const showGet = { resource, operation: ['get'] };
+const showGetAll = { resource, operation: ['getAll'] };
+const showUpdate = { resource, operation: ['update'] };
+const showActivity = { resource, operation: ['getActivity'] };
+
+const assetIdField = (show: { resource: string[]; operation: string[] }): INodeProperties => ({
+	displayName: 'Asset ID',
+	name: 'assetId',
+	type: 'string',
+	required: true,
+	default: '',
+	placeholder: 'e.g. LP-DL-6sNdq',
+	description: 'The readable asset ID shown in Harmony, not the UUID',
+	displayOptions: { show },
+});
+
+const includeCustomFieldsConfig: INodeProperties = {
+	displayName: 'Include Custom Field Definitions',
+	name: 'includeCustomFieldsConfig',
+	type: 'boolean',
+	default: false,
+	description: 'Whether to include the definition of each custom field alongside its value',
+	routing: { send: { type: 'query', property: 'include_custom_fields_config' } },
+};
+
+/** Body property of the single asset sent by Create */
+const asset = (property: string) => `assets[0].${property}`;
+
+const query = (property: string, value?: string) => ({
+	send: value ? { type: 'query' as const, property, value } : { type: 'query' as const, property },
+});
+
+const csvFilter = (
+	displayName: string,
+	name: string,
+	property: string,
+	description: string,
+): INodeProperties => ({
+	displayName,
+	name,
+	type: 'string',
+	default: '',
+	description,
+	routing: query(property, CSV_TO_LIST),
+});
+
+const multiFilter = (
+	displayName: string,
+	name: string,
+	property: string,
+	values: Array<string | [string, string]>,
+): INodeProperties => ({
+	displayName,
+	name,
+	type: 'multiOptions',
+	options: enumOptions(values),
+	default: [],
+	routing: query(property),
+});
+
+const numberFilter = (
+	displayName: string,
+	name: string,
+	property: string,
+	description: string,
+): INodeProperties => ({
+	displayName,
+	name,
+	type: 'number',
+	default: 0,
+	description,
+	routing: query(property),
+});
+
+const booleanFilter = (
+	displayName: string,
+	name: string,
+	property: string,
+	description: string,
+): INodeProperties => ({
+	displayName,
+	name,
+	type: 'boolean',
+	default: false,
+	description,
+	routing: query(property),
+});
+
+export const assetDescription: INodeProperties[] = [
+	{
+		displayName: 'Operation',
+		name: 'operation',
+		type: 'options',
+		noDataExpression: true,
+		displayOptions: { show: { resource } },
+		options: [
+			{
+				name: 'Create',
+				value: 'create',
+				action: 'Create asset',
+				description: 'Create an asset. An asset with the same serial number is updated instead.',
+				routing: { request: { method: 'POST', url: ASSETS } },
+			},
+			{
+				name: 'Get',
+				value: 'get',
+				action: 'Get asset',
+				description: 'Retrieve an asset with its full details',
+				routing: {
+					request: { method: 'GET', url: assetUrl() },
+					output: { postReceive: [simplify(SIMPLIFIED_FIELDS)] },
+				},
+			},
+			{
+				name: 'Get Activity',
+				value: 'getActivity',
+				action: 'Get asset activity',
+				description:
+					'Retrieve the activity log of an asset (assignments, status changes, MDM events)',
+				routing: {
+					request: { method: 'GET', url: assetUrl('/activity') },
+					operations: { pagination: paginate({ style: 'offset', pageSize: 100 }) },
+					output: { postReceive: [itemsFrom('items')] },
+				},
+			},
+			{
+				name: 'Get Many',
+				value: 'getAll',
+				action: 'Get many assets',
+				description: 'Retrieve a list of hardware assets',
+				routing: {
+					request: { method: 'GET', url: ASSETS },
+					operations: { pagination: paginate({ style: 'offset', pageSize: 500 }) },
+					output: { postReceive: [itemsFrom('items'), simplify(SIMPLIFIED_FIELDS)] },
+				},
+			},
+			{
+				name: 'Update',
+				value: 'update',
+				action: 'Update asset',
+				description: 'Update an asset, including who it is assigned to',
+				routing: { request: { method: 'PATCH', url: assetUrl() } },
+			},
+		],
+		default: 'get',
+	},
+
+	// ------------------------------------------------------------ create
+	{
+		displayName: 'Name',
+		name: 'name',
+		type: 'string',
+		required: true,
+		default: '',
+		placeholder: 'e.g. MacBook Pro 14"',
+		displayOptions: { show: showCreate },
+		routing: { send: { type: 'body', property: asset('name') } },
+	},
+	{
+		displayName: 'Asset Type',
+		name: 'assetType',
+		type: 'options',
+		required: true,
+		options: enumOptions(ASSET_TYPES),
+		default: 'LAPTOP',
+		displayOptions: { show: showCreate },
+		routing: { send: { type: 'body', property: asset('asset_type') } },
+	},
+	{
+		displayName: 'Manufacturer',
+		name: 'manufacturer',
+		type: 'string',
+		required: true,
+		default: '',
+		placeholder: 'e.g. Apple',
+		displayOptions: { show: showCreate },
+		routing: { send: { type: 'body', property: asset('manufacturer') } },
+	},
+	{
+		displayName: 'Additional Fields',
+		name: 'additionalFields',
+		type: 'collection',
+		placeholder: 'Add Field',
+		default: {},
+		displayOptions: { show: showCreate },
+		options: [
+			{
+				displayName: 'Assignee',
+				name: 'assignee',
+				type: 'string',
+				default: '',
+				description: 'Employee ID or work email of the person to assign the asset to',
+				routing: { send: { type: 'body', property: asset('assignee') } },
+			},
+			{
+				displayName: 'Custom Fields',
+				name: 'customFields',
+				type: 'json',
+				default: '{}',
+				description: 'Custom field values, e.g. {"config_id": {"field_id": "value"}}',
+				routing: { send: { type: 'body', property: asset('custom_fields'), value: JSON_VALUE } },
+			},
+			{
+				displayName: 'For Sale',
+				name: 'forSale',
+				type: 'boolean',
+				default: false,
+				description: 'Whether the asset is for sale',
+				routing: { send: { type: 'body', property: asset('for_sale') } },
+			},
+			{
+				displayName: 'Location',
+				name: 'locationManual',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. Building A, Shelf 3',
+				description: 'Physical location of the asset',
+				routing: { send: { type: 'body', property: asset('location_manual') } },
+			},
+			{
+				displayName: 'MDM Status',
+				name: 'mdmStatus',
+				type: 'options',
+				options: enumOptions(ASSET_MDM_STATUSES),
+				default: 'ACTIVE',
+				routing: { send: { type: 'body', property: asset('mdm_status') } },
+			},
+			{
+				displayName: 'Model',
+				name: 'model',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. MacBook Pro (14-inch, M3)',
+				routing: { send: { type: 'body', property: asset('model') } },
+			},
+			{
+				displayName: 'Note',
+				name: 'note',
+				type: 'string',
+				default: '',
+				routing: { send: { type: 'body', property: asset('note') } },
+			},
+			{
+				displayName: 'Ownership',
+				name: 'ownership',
+				type: 'options',
+				options: enumOptions(ASSET_OWNERSHIPS),
+				default: 'COMPANY_OWNED',
+				routing: { send: { type: 'body', property: asset('ownership') } },
+			},
+			{
+				displayName: 'Purchase Number',
+				name: 'purchaseNumber',
+				type: 'string',
+				default: '',
+				routing: { send: { type: 'body', property: asset('purchase_number') } },
+			},
+			{
+				displayName: 'Quantity',
+				name: 'quantity',
+				type: 'number',
+				typeOptions: { minValue: 1 },
+				default: 1,
+				description: 'Number of identical assets to create, for accessories without serial numbers',
+				routing: { send: { type: 'body', property: asset('quantity') } },
+			},
+			{
+				displayName: 'Serial Number',
+				name: 'serialNumber',
+				type: 'string',
+				default: '',
+				routing: { send: { type: 'body', property: asset('serial_number') } },
+			},
+			{
+				displayName: 'Status',
+				name: 'status',
+				type: 'options',
+				options: enumOptions(ASSET_STATUSES),
+				default: 'in_stock',
+				description: 'Lifecycle status',
+				routing: { send: { type: 'body', property: asset('status') } },
+			},
+		],
+	},
+
+	// ------------------------------------------------------------ get
+	assetIdField(showGet),
+	simplifyField(showGet),
+	{
+		displayName: 'Options',
+		name: 'options',
+		type: 'collection',
+		placeholder: 'Add Option',
+		default: {},
+		displayOptions: { show: showGet },
+		options: [includeCustomFieldsConfig],
+	},
+
+	// ------------------------------------------------------------ get many
+	...getManyFields({ show: showGetAll, limitProperty: 'limit', maxLimit: 10000 }),
+	simplifyField(showGetAll),
+	{
+		displayName: 'Filters',
+		name: 'filters',
+		type: 'collection',
+		placeholder: 'Add Filter',
+		default: {},
+		displayOptions: { show: showGetAll },
+		options: [
+			multiFilter('Ages', 'age', 'age', [
+				['0_to_1_year', '0 to 1 Year'],
+				['2_to_3_years', '2 to 3 Years'],
+				['4_to_5_years', '4 to 5 Years'],
+				['6_plus_years', '6+ Years'],
+				['n/a', 'No Purchase Date'],
+			]),
+			multiFilter('Asset Types', 'assetType', 'asset_type', ASSET_TYPES),
+			booleanFilter(
+				'Assigned',
+				'assigned',
+				'assigned',
+				'Whether to only return assets assigned to an employee (or only unassigned ones)',
+			),
+			numberFilter(
+				'Battery Cycles Max',
+				'batteryCyclesMax',
+				'battery_cycles_max',
+				'Maximum battery cycle count',
+			),
+			numberFilter(
+				'Battery Cycles Min',
+				'batteryCyclesMin',
+				'battery_cycles_min',
+				'Minimum battery cycle count',
+			),
+			multiFilter('Compliance', 'compliance', 'compliance', [
+				'COMPLIANT',
+				'NEEDS_UPDATE',
+				'NON_COMPLIANT',
+				'UNKNOWN',
+			]),
+			csvFilter('CPU Types', 'cpuType', 'cpu_type', 'Comma-separated CPU types'),
+			{
+				displayName: 'Custom Fields',
+				name: 'customFieldFilters',
+				type: 'json',
+				default: '{}',
+				description: 'Filter by custom field values, e.g. {"config_id:field_id": ["value"]}',
+				routing: query(
+					'custom_field_filters',
+					'={{ typeof $value === "string" ? $value : JSON.stringify($value) }}',
+				),
+			},
+			multiFilter('Disk Encryption', 'diskEncryption', 'disk_encryption', [
+				'encrypted',
+				'unencrypted',
+				'unknown',
+				'no_disks',
+			]),
+			multiFilter('EDR Statuses', 'edrStatus', 'edr_status', ['active', 'inactive', 'degraded']),
+			csvFilter(
+				'Employee IDs',
+				'employeeId',
+				'employee_id',
+				'Comma-separated IDs of assigned employees. Use N/A for unassigned assets.',
+			),
+			csvFilter(
+				'Employee Locations',
+				'employeeLocation',
+				'employee_location',
+				'Comma-separated locations of the assigned employee',
+			),
+			booleanFilter(
+				'Enrolled in MDM',
+				'enrolled',
+				'enrolled',
+				'Whether to only return devices enrolled in an MDM (or only those that are not)',
+			),
+			csvFilter('Families', 'familyName', 'family_name', 'Comma-separated model families'),
+			booleanFilter(
+				'For Sale',
+				'forSale',
+				'for_sale',
+				'Whether to only return assets for sale (or not for sale)',
+			),
+			{
+				displayName: 'IDs',
+				name: 'ids',
+				type: 'string',
+				default: '',
+				description: 'Comma-separated asset UUIDs',
+				routing: query('ids', CSV_TO_LIST),
+			},
+			{ ...includeCustomFieldsConfig },
+			booleanFilter(
+				'Include Disks',
+				'includeDisks',
+				'include_disks',
+				"Whether to include each device's disks",
+			),
+			csvFilter(
+				'Integration IDs',
+				'integrationId',
+				'integration_id',
+				'Comma-separated integration IDs',
+			),
+			{
+				displayName: 'Last Seen Before',
+				name: 'lastSeenBefore',
+				type: 'dateTime',
+				default: '',
+				description: 'Only assets last seen before this time',
+				routing: query('last_seen_before'),
+			},
+			csvFilter('Locations', 'location', 'location', 'Comma-separated asset locations'),
+			csvFilter(
+				'MDM Device IDs',
+				'mdmDeviceId',
+				'mdm_device_id',
+				'Comma-separated device IDs reported by the MDM',
+			),
+			multiFilter('MDM Statuses', 'mdmStatus', 'mdm_status', ASSET_MDM_STATUSES),
+			numberFilter('Memory Max (GB)', 'memoryGbMax', 'memory_gb_max', 'Maximum total RAM in GB'),
+			numberFilter('Memory Min (GB)', 'memoryGbMin', 'memory_gb_min', 'Minimum total RAM in GB'),
+			csvFilter('Models', 'model', 'model', 'Comma-separated models'),
+			csvFilter(
+				'OS Versions',
+				'osVersionDisplay',
+				'os_version_display',
+				'Comma-separated OS versions',
+			),
+			multiFilter('Ownership', 'ownership', 'ownership', ASSET_OWNERSHIPS),
+			multiFilter(
+				'Retirement Reasons',
+				'retirementReason',
+				'retirement_reason',
+				ASSET_RETIREMENT_REASONS,
+			),
+			{
+				displayName: 'Search',
+				name: 'search',
+				type: 'string',
+				default: '',
+				description: 'Text to search for in name, model, family, serial number or CPU type',
+				routing: query('search'),
+			},
+			{
+				displayName: 'Serial Number',
+				name: 'serialNumber',
+				type: 'string',
+				default: '',
+				routing: query('serial_number'),
+			},
+			csvFilter('Sources', 'source', 'source', 'Comma-separated asset sources'),
+			multiFilter('Statuses', 'status', 'status', ASSET_STATUSES),
+			numberFilter(
+				'Storage Max (GB)',
+				'storageGbMax',
+				'storage_gb_max',
+				'Maximum disk capacity in GB',
+			),
+			numberFilter(
+				'Storage Min (GB)',
+				'storageGbMin',
+				'storage_gb_min',
+				'Minimum disk capacity in GB',
+			),
+			csvFilter(
+				'Suppliers',
+				'supplier',
+				'supplier',
+				'Comma-separated suppliers from purchase details',
+			),
+			csvFilter('Vendors', 'vendor', 'vendor', 'Comma-separated manufacturers'),
+			multiFilter('Warranty', 'warrantyState', 'warranty_state', [
+				['in_warranty', 'In Warranty'],
+				'expired',
+				['none', 'No Warranty Recorded'],
+			]),
+		],
+	},
+	{
+		displayName: 'Sort',
+		name: 'sort',
+		type: 'collection',
+		placeholder: 'Add Sort Rule',
+		default: {},
+		displayOptions: { show: showGetAll },
+		options: [
+			{
+				displayName: 'Custom Field',
+				name: 'customFieldSortBy',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. config_id:field_id',
+				description: 'Sort by a custom field instead of Sort By',
+				routing: query('custom_field_sort_by'),
+			},
+			{
+				displayName: 'Custom Field Type',
+				name: 'customFieldSortType',
+				type: 'options',
+				options: enumOptions(['number', 'text']),
+				default: 'text',
+				description: 'How to compare custom field values',
+				routing: query('custom_field_sort_type'),
+			},
+			{
+				displayName: 'Direction',
+				name: 'direction',
+				type: 'options',
+				options: enumOptions([
+					['asc', 'Ascending'],
+					['desc', 'Descending'],
+				]),
+				default: 'desc',
+				routing: query('sort_direction'),
+			},
+			{
+				displayName: 'Sort By',
+				name: 'sortBy',
+				type: 'options',
+				options: enumOptions([
+					'name',
+					'status',
+					['mdm_status', 'MDM Status'],
+					'ownership',
+					'compliance',
+					'created_at',
+					'last_seen',
+					'source',
+					'vendor',
+					'model',
+					'family_name',
+					['eol_date', 'End of Life Date'],
+					'supplier',
+					['os_version_display', 'OS Version'],
+					'retirement_reason',
+					'serial_number',
+					'last_restart_time',
+					'warranty_end_date',
+					'purchase_date',
+					['edr_status', 'EDR Status'],
+					'active_threats',
+					['edr_last_scan_at', 'EDR Last Scan'],
+					['edr_agent_version', 'EDR Agent Version'],
+					['cpu_type', 'CPU Type'],
+					['cpu_cores', 'CPU Cores'],
+					'enrollment_date',
+					'for_sale',
+				]),
+				default: 'last_seen',
+				routing: query('sort_by'),
+			},
+		],
+	},
+
+	// ------------------------------------------------------------ update
+	assetIdField(showUpdate),
+	{
+		displayName: 'Update Fields',
+		name: 'updateFields',
+		type: 'collection',
+		placeholder: 'Add Field',
+		default: {},
+		displayOptions: { show: showUpdate },
+		options: [
+			{
+				displayName: 'Assignee ID',
+				name: 'employeeId',
+				type: 'string',
+				default: '',
+				description: 'Employee ID to assign the asset to. Use _UNASSIGN_ to unassign it.',
+				routing: { send: { type: 'body', property: 'employee_id' } },
+			},
+			{
+				displayName: 'Custom Fields',
+				name: 'customFields',
+				type: 'json',
+				default: '{}',
+				description:
+					'Custom field values to merge, e.g. {"config_ID": {"field_ID": "value"}}. A null value clears the field.',
+				routing: { send: { type: 'body', property: 'custom_fields', value: JSON_VALUE } },
+			},
+			{
+				displayName: 'For Sale',
+				name: 'forSale',
+				type: 'boolean',
+				default: false,
+				description: 'Whether the asset is for sale',
+				routing: { send: { type: 'body', property: 'for_sale' } },
+			},
+			{
+				displayName: 'Location',
+				name: 'locationManual',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. Building A, Shelf 3',
+				description: 'Physical location of the asset. Send an empty value to clear it.',
+				routing: { send: { type: 'body', property: 'location_manual' } },
+			},
+			{
+				displayName: 'Location Pinned',
+				name: 'locationPinned',
+				type: 'boolean',
+				default: true,
+				description: 'Whether the manual location is kept even when an MDM reports another one',
+				routing: { send: { type: 'body', property: 'location_pinned' } },
+			},
+			{
+				displayName: 'Name',
+				name: 'name',
+				type: 'string',
+				default: '',
+				routing: { send: { type: 'body', property: 'name' } },
+			},
+			{
+				displayName: 'Ownership',
+				name: 'ownership',
+				type: 'options',
+				options: enumOptions(ASSET_OWNERSHIPS),
+				default: 'COMPANY_OWNED',
+				routing: { send: { type: 'body', property: 'ownership' } },
+			},
+			{
+				displayName: 'Retirement Notes',
+				name: 'retirementNotes',
+				type: 'string',
+				default: '',
+				description: 'Required when the retirement reason is Other',
+				routing: { send: { type: 'body', property: 'retirement_notes' } },
+			},
+			{
+				displayName: 'Retirement Reason',
+				name: 'retirementSubStatus',
+				type: 'options',
+				options: enumOptions(ASSET_RETIREMENT_REASONS),
+				default: 'other',
+				description: 'Only applies when the status is Retired',
+				routing: { send: { type: 'body', property: 'retirement_sub_status' } },
+			},
+			{
+				displayName: 'Status',
+				name: 'status',
+				type: 'options',
+				options: enumOptions(ASSET_STATUSES),
+				default: 'active',
+				description: 'Lifecycle status',
+				routing: { send: { type: 'body', property: 'status' } },
+			},
+		],
+	},
+
+	// ------------------------------------------------------------ activity
+	assetIdField(showActivity),
+	...getManyFields({ show: showActivity, limitProperty: 'limit', maxLimit: 100 }),
+];
